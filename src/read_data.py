@@ -1,8 +1,12 @@
 from bs4 import BeautifulSoup
+from bs4.element import NavigableString
 from tqdm import tqdm
 import numpy as np
 from tifffile import imread
+import threading
+import itertools
 
+NUM_THREADS = 12
 TOPO_PATH = "data/aw3d30/"
 VRT_PATH = TOPO_PATH + "AW3D30_global.vrt"
 
@@ -45,9 +49,10 @@ class Block:
 
         reshaped = image.reshape(self.resolution[0], self.scale_x, self.resolution[1], self.scale_y)
         self.scaled_image = reshaped.mean(axis=(1,3))
+        self.export_as_dat(f"heightdata/data{self.x_off // self.x_size},{self.y_off // self.y_size}.dat")
 
-def read_blocks() -> list[Block]:
-    """Generate blocks of data."""
+def read_xml() -> list[Block]:
+    """Read in xml and distribute to threads"""
     # reading in xml file
     with open(VRT_PATH, "r") as f:
         vrt_file = f.read()
@@ -55,8 +60,19 @@ def read_blocks() -> list[Block]:
 
     # blocks are SimpleSource objects
     sources = vrt_data.find_all("SimpleSource")
+    source_chunk = [itertools.islice(sources, i, len(sources), NUM_THREADS) for i in range(NUM_THREADS)]
+    returned_blocks = [[] for _ in range(NUM_THREADS)]
+    threads = [threading.Thread(target = read_blocks, args = (chunk, returned_blocks[i])) for i, chunk in enumerate(source_chunk)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
 
-    blocks = []
+    return list(itertools.chain.from_iterable(returned_blocks))
+
+
+def read_blocks(sources: list[NavigableString], blocks: list):
+    """Generate blocks of data."""
 
     # transfering to Block class
     for source in tqdm(sources):
@@ -82,6 +98,4 @@ def read_blocks() -> list[Block]:
         current_block.read_image()
         blocks.append(current_block)
 
-    return blocks
-
-blocks = read_blocks()
+blocks = read_xml()
