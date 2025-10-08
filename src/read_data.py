@@ -6,7 +6,7 @@ from tifffile import imread
 import threading
 import itertools
 
-NUM_THREADS = 12
+NUM_THREADS = 15
 TOPO_PATH = "data/aw3d30/"
 VRT_PATH = TOPO_PATH + "AW3D30_global.vrt"
 
@@ -18,22 +18,27 @@ class Block:
     def __init__(self, filepath: str, x_off: int, y_off: int, x_size: int, y_size: int, z_scale: int, resolution: tuple[int, int], z_offset: int) -> None:
         """Initialize self."""
         self.filepath = filepath
-        self.x_off = x_off
-        self.y_off = y_off
+
+        self.x_off = x_off // x_size
+        # data is south up
+        self.y_off = 180 - (y_off // y_size)
+
         self.x_size = x_size
         self.y_size = y_size
-        self.z_scale = z_scale
-        #self.scaled_image = np.zeros((resolution[0], resolution[1]), dtype=np.int16)
+
         self.scale_x = x_size // resolution[0]
         self.scale_y = y_size // resolution[1]
-        self.resolution = resolution
+        self.z_scale = z_scale
         self.z_offset = z_offset
+
+        self.resolution = resolution
 
     def export_as_dat(self, filepath: str) -> None:
         data = ""
         for x in range(self.resolution[0]):
             for y in range(self.resolution[1]):
-                data += "%s "%self.scaled_image[x, y]
+                # data is south up
+                data += "%s "%self.scaled_image[self.resolution[0] - x - 1, y]
             data += "\n"
 
         with open(filepath, "w") as file:
@@ -49,7 +54,8 @@ class Block:
 
         reshaped = image.reshape(self.resolution[0], self.scale_x, self.resolution[1], self.scale_y)
         self.scaled_image = reshaped.mean(axis=(1,3))
-        self.export_as_dat(f"heightdata/data{self.x_off // self.x_size},{self.y_off // self.y_size}.dat")
+        self.scaled_image *= 1 / self.z_scale
+        self.export_as_dat(f"heightdata/data{self.x_off},{self.y_off}.dat")
 
 def read_xml() -> list[Block]:
     """Read in xml and distribute to threads"""
@@ -91,7 +97,7 @@ def read_blocks(sources: list[NavigableString], blocks: list):
             y_off=y_off,
             x_size=x_size,
             y_size=y_size,
-            z_scale=1,
+            z_scale=100,
             resolution=(x_size // 100, y_size // 100),
             z_offset=0
         )
