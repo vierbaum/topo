@@ -5,6 +5,7 @@ import numpy as np
 from tifffile import imread
 import threading
 import itertools
+import math
 
 NUM_THREADS = 15
 TOPO_PATH = "data/aw3d30/"
@@ -15,13 +16,17 @@ class Block:
     Store the data of a topographic block.
     """
 
+    raster_x: int
+    raster_y: int
+
+
     def __init__(self, filepath: str, x_off: int, y_off: int, x_size: int, y_size: int, z_scale: int, resolution: tuple[int, int], z_offset: int) -> None:
         """Initialize self."""
         self.filepath = filepath
 
-        self.x_off = x_off // x_size
+        self.x_off = x_off
         # data is south up
-        self.y_off = 180 - (y_off // y_size)
+        self.y_off = 180 - y_off
 
         self.x_size = x_size
         self.y_size = y_size
@@ -33,12 +38,18 @@ class Block:
 
         self.resolution = resolution
 
+    def unmeractor(self, x: int, y: int) -> tuple[float, float]:
+        """Return angular coordinates on globe for any given x, y coordinates."""
+        latitude = 2 * (x + self.x_off) / self.raster_x * math.pi + math.pi
+        longitude = (y + self.y_off) / self.raster_y * math.pi
+
+        return latitude, longitude
+
     def export_as_dat(self, filepath: str) -> None:
         data = ""
         for x in range(self.resolution[0]):
             for y in range(self.resolution[1]):
-                # data is south up
-                data += "%s "%self.scaled_image[self.resolution[0] - x - 1, y]
+                data += "%s "%self.scaled_image[x, y]
             data += "\n"
 
         with open(filepath, "w") as file:
@@ -54,15 +65,18 @@ class Block:
 
         reshaped = image.reshape(self.resolution[0], self.scale_x, self.resolution[1], self.scale_y)
         self.scaled_image = reshaped.mean(axis=(1,3))
+        # flipping it along x-axis
+        self.scaled_image = np.flip(self.scaled_image, axis=0)
         self.scaled_image *= 1 / self.z_scale
-        self.export_as_dat(f"heightdata/data{self.x_off},{self.y_off}.dat")
+        self.export_as_dat(f"heightdata/data{self.x_off // self.x_size},{self.y_off // self.y_size}.dat")
 
 def read_xml() -> list[Block]:
     """Read in xml and distribute to threads"""
     # reading in xml file
     with open(VRT_PATH, "r") as f:
-        vrt_file = f.read()
-    vrt_data = BeautifulSoup(vrt_file, "xml")
+        vrt_data = BeautifulSoup(f.read(), "xml")
+    Block.raster_x = int(vrt_data.VRTDataset.get("rasterXSize"))
+    Block.raster_y = int(vrt_data.VRTDataset.get("rasterYSize"))
 
     # blocks are SimpleSource objects
     sources = vrt_data.find_all("SimpleSource")
@@ -97,11 +111,12 @@ def read_blocks(sources: list[NavigableString], blocks: list):
             y_off=y_off,
             x_size=x_size,
             y_size=y_size,
-            z_scale=100,
-            resolution=(x_size // 100, y_size // 100),
+            z_scale=60,
+            resolution=(x_size // 60, y_size // 60),
             z_offset=0
         )
         current_block.read_image()
         blocks.append(current_block)
 
-blocks = read_xml()
+if __name__ == "__main__":
+    blocks = read_xml()
