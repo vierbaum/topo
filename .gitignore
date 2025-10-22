@@ -1,0 +1,7 @@
+data/*
+heightdata/*
+*scad
+height_test.py
+*stl
+*dat
+__pycache__

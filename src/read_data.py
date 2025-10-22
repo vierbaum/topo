@@ -1,88 +1,62 @@
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString
 from tqdm import tqdm
-import numpy as np
-from tifffile import imread
 import threading
 import itertools
-import math
-
-NUM_THREADS = 15
-TOPO_PATH = "data/aw3d30/"
-VRT_PATH = TOPO_PATH + "AW3D30_global.vrt"
-
-class Block:
-    """
-    Store the data of a topographic block.
-    """
-
-    raster_x: int
-    raster_y: int
+import os
+import pathlib
+import pdb
+from block import Block
+pdb.set_trace()
 
 
-    def __init__(self, filepath: str, x_off: int, y_off: int, x_size: int, y_size: int, z_scale: int, resolution: tuple[int, int], z_offset: int) -> None:
-        """Initialize self."""
-        self.filepath = filepath
 
-        self.x_off = x_off
-        # data is south up
-        self.y_off = 180 - y_off
+def read_xml(dataset_path: pathlib.Path, xml_file: str, num_threads: int) -> list[Block]:
+    """Read in xml and distribute to threads."""
+    xml_filepath = dataset_path / xml_file
+    if not xml_filepath.exists():
+        raise FileNotFoundError(f"{xml_filepath} is not a valid path.")
 
-        self.x_size = x_size
-        self.y_size = y_size
-
-        self.scale_x = x_size // resolution[0]
-        self.scale_y = y_size // resolution[1]
-        self.z_scale = z_scale
-        self.z_offset = z_offset
-
-        self.resolution = resolution
-
-    def unmeractor(self, x: int, y: int) -> tuple[float, float]:
-        """Return angular coordinates on globe for any given x, y coordinates."""
-        latitude = 2 * (x + self.x_off) / self.raster_x * math.pi + math.pi
-        longitude = (y + self.y_off) / self.raster_y * math.pi
-
-        return latitude, longitude
-
-    def export_as_dat(self, filepath: str) -> None:
-        data = ""
-        for x in range(self.resolution[0]):
-            for y in range(self.resolution[1]):
-                data += "%s "%self.scaled_image[x, y]
-            data += "\n"
-
-        with open(filepath, "w") as file:
-            file.write(data)
-
-    def read_image(self) -> None:
-        image = imread(self.filepath)
-
-        # full image
-        if self.scale_x == self.scale_y == 1:
-            self.scaled_image = image
-            return
-
-        reshaped = image.reshape(self.resolution[0], self.scale_x, self.resolution[1], self.scale_y)
-        self.scaled_image = reshaped.mean(axis=(1,3))
-        # flipping it along x-axis
-        self.scaled_image = np.flip(self.scaled_image, axis=0)
-        self.scaled_image *= 1 / self.z_scale
-        self.export_as_dat(f"heightdata/data{self.x_off // self.x_size},{self.y_off // self.y_size}.dat")
-
-def read_xml() -> list[Block]:
-    """Read in xml and distribute to threads"""
     # reading in xml file
-    with open(VRT_PATH, "r") as f:
+    with open(xml_filepath, "r") as f:
         vrt_data = BeautifulSoup(f.read(), "xml")
-    Block.raster_x = int(vrt_data.VRTDataset.get("rasterXSize"))
-    Block.raster_y = int(vrt_data.VRTDataset.get("rasterYSize"))
+
+    if not hasattr(vrt_data, "VRTDataset"):
+        raise RuntimeError("failed to read VRTDataset")
+    dataset = vrt_data.VRTDataset
+
+    if not dataset:
+        raise RuntimeError("failed to read dataset")
+
+    raster_x_size = dataset.get("rasterXSize")
+    raster_y_size = dataset.get("rasterYSize")
+
+    if not isinstance(raster_x_size, str):
+        raise RuntimeError("failed to read rasterXSize")
+    if not isinstance(raster_y_size, str):
+        raise RuntimeError("failed to read rasterYSize")
+
+    try:
+        Block.raster_x = int(raster_x_size)
+    except Exception:
+        raise RuntimeError("failed to convert rasterXSize")
+    try:
+        Block.raster_y = int(raster_y_size)
+    except Exception:
+        raise RuntimeError("failed to convert rasterySize")
 
     # blocks are SimpleSource objects
     sources = vrt_data.find_all("SimpleSource")
-    source_chunk = [itertools.islice(sources, i, len(sources), NUM_THREADS) for i in range(NUM_THREADS)]
-    returned_blocks = [[] for _ in range(NUM_THREADS)]
-    threads = [threading.Thread(target = read_blocks, args = (chunk, returned_blocks[i])) for i, chunk in enumerate(source_chunk)]
+
+    source_chunk = [itertools.islice(sources, i, len(sources), num_threads)
+                    for i in range(num_threads)]
+    returned_blocks = [[] for _ in range(num_threads)]
+    threads = [
+        threading.Thread(
+            target=read_blocks_from_tif,
+            args=(dataset_path, chunk, returned_blocks[i])
+        ) for i, chunk in enumerate(source_chunk)
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -91,32 +65,59 @@ def read_xml() -> list[Block]:
     return list(itertools.chain.from_iterable(returned_blocks))
 
 
-def read_blocks(sources: list[NavigableString], blocks: list):
+def read_blocks_from_tif(dataset_path: pathlib.Path, sources: list[NavigableString], blocks: list):
     """Generate blocks of data."""
 
     # transfering to Block class
     for source in tqdm(sources):
-        filename = source.SourceFilename.contents[0]
 
+        if not source:
+            raise RuntimeError("source may not be empty.")
+
+        if not hasattr(source, "SourceFilename"):
+            raise RuntimeError("failed to read block filename.")
+
+        filename = source.SourceFilename.contents[0]
+        filepath = dataset_path / str(filename)
+
+        if not hasattr(source, "SrcRect"):
+            raise RuntimeError("failed to read block SrcRect.")
         x_size = int(source.SrcRect.get("xSize"))
         y_size = int(source.SrcRect.get("ySize"))
 
+        if not hasattr(source, "DstRect"):
+            raise RuntimeError("failed to read block DstRect.")
         x_off = int(source.DstRect.get("xOff"))
         y_off = int(source.DstRect.get("yOff"))
 
-        # 1:1 scale
         current_block = Block(
-            filepath=TOPO_PATH + str(filename),
+            filepath=filepath,
             x_off=x_off,
             y_off=y_off,
             x_size=x_size,
             y_size=y_size,
             z_scale=60,
-            resolution=(x_size // 60, y_size // 60),
+            resolution=(x_size // 10, y_size // 10),
             z_offset=0
         )
-        current_block.read_image()
+        current_block.load_image()
+        current_block.export_as_pickle(f"{dataset_path}/360x360/{filename}")
         blocks.append(current_block)
 
+
+def read_blocks_from_pickle(resolution_dir: pathlib.Path) -> list[Block]:
+    blocks = []
+    for path in tqdm(os.listdir(resolution_dir)):
+        b = Block()
+        b.read_from_pickle(resolution_dir / path)
+        blocks.append(b)
+    return blocks
+
+
 if __name__ == "__main__":
-    blocks = read_xml()
+    dataset_path=pathlib.Path("data/aw3d30")
+    #read_xml(dataset_path=dataset_path, xml_file="AW3D30_global.vrt", num_threads = 15)
+    blocks = read_blocks_from_pickle(dataset_path / "360x360" / "AW3D30_global")
+    breakpoint()
+    blocks[285].export_as_dat("data.dat")
+    #blocks = read_blocks_from_pickle("60x60")
