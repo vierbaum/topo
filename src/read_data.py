@@ -5,13 +5,12 @@ import threading
 import itertools
 import os
 import pathlib
-import pdb
-from block import Block
-pdb.set_trace()
+import block
+#pdb.set_trace()
 
 
 
-def read_xml(dataset_path: pathlib.Path, xml_file: str, num_threads: int) -> list[Block]:
+def read_xml(dataset_path: pathlib.Path, xml_file: str, num_threads: int) -> list[block.Block]:
     """Read in xml and distribute to threads."""
     xml_filepath = dataset_path / xml_file
     if not xml_filepath.exists():
@@ -37,11 +36,11 @@ def read_xml(dataset_path: pathlib.Path, xml_file: str, num_threads: int) -> lis
         raise RuntimeError("failed to read rasterYSize")
 
     try:
-        Block.raster_x = int(raster_x_size)
+        block.Block.raster_x = int(raster_x_size)
     except Exception:
         raise RuntimeError("failed to convert rasterXSize")
     try:
-        Block.raster_y = int(raster_y_size)
+        block.Block.raster_y = int(raster_y_size)
     except Exception:
         raise RuntimeError("failed to convert rasterySize")
 
@@ -90,25 +89,23 @@ def read_blocks_from_tif(dataset_path: pathlib.Path, sources: list[NavigableStri
         x_off = int(source.DstRect.get("xOff"))
         y_off = int(source.DstRect.get("yOff"))
 
-        current_block = Block(
+        current_block = block.Block(
             filepath=filepath,
             x_off=x_off,
             y_off=y_off,
             x_size=x_size,
             y_size=y_size,
-            z_scale=60,
-            resolution=(x_size // 10, y_size // 10),
-            z_offset=0
+            resolution=(x_size // 20, y_size // 20),
         )
         current_block.load_image()
-        current_block.export_as_pickle(f"{dataset_path}/360x360/{filename}")
+        current_block.export_as_pickle(f"{dataset_path}/180x180/{filename}")
         blocks.append(current_block)
 
 
-def read_blocks_from_pickle(resolution_dir: pathlib.Path) -> list[Block]:
+def read_blocks_from_pickle(resolution_dir: pathlib.Path) -> list[block.Block]:
     blocks = []
     for path in tqdm(os.listdir(resolution_dir)):
-        b = Block()
+        b = block.Block()
         b.read_from_pickle(resolution_dir / path)
         blocks.append(b)
     return blocks
@@ -116,8 +113,9 @@ def read_blocks_from_pickle(resolution_dir: pathlib.Path) -> list[Block]:
 
 if __name__ == "__main__":
     dataset_path=pathlib.Path("data/aw3d30")
-    #read_xml(dataset_path=dataset_path, xml_file="AW3D30_global.vrt", num_threads = 15)
-    blocks = read_blocks_from_pickle(dataset_path / "360x360" / "AW3D30_global")
-    breakpoint()
-    blocks[285].export_as_dat("data.dat")
-    #blocks = read_blocks_from_pickle("60x60")
+    read_xml(dataset_path=dataset_path, xml_file="AW3D30_global.vrt", num_threads = 15)
+    #blocks = read_blocks_from_pickle(dataset_path / "180x180" / "AW3D30_global")
+    #for c_block in tqdm(blocks):
+    #    if c_block.x_off != None and c_block.y_off != None and c_block.x_size and c_block.y_size:
+    #        c_block.scale_z(1/50)
+    #        c_block.export_as_dat(f"heightdata/data{c_block.x_off // c_block.x_size},{c_block.y_off // c_block.y_size}")

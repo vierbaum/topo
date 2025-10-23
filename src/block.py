@@ -19,24 +19,21 @@ class Block:
         y_off: int | None = None,
         x_size: int | None = None,
         y_size: int | None = None,
-        z_scale: int | None = None,
         resolution: tuple[int, int] | None = None,
-        z_offset: int | None = None
     ) -> None:
         """Initialize self."""
         self.filepath = filepath
 
-        self.x_off = x_off
-        self.y_off = y_off
+        if x_off != None:
+            self.x_off = x_off
+        if y_off != None:
+            self.y_off = self.raster_y - y_off - y_size
 
         self.x_size = x_size
         self.y_size = y_size
 
         if isinstance(resolution, list) and len(resolution) != 2:
             raise ValueError("Resolution needs to be of lenght 2")
-
-        self.z_scale = z_scale
-        self.z_offset = z_offset
 
         if resolution:
             self.scaled_image = np.zeros(resolution, dtype=np.int16)
@@ -74,8 +71,6 @@ class Block:
         self.y_off = data["y_off"]
         self.x_size = data["x_size"]
         self.y_size = data["y_size"]
-        self.z_scale = data["z_scale"]
-        self.z_offset = data["z_offset"]
         self.scaled_image = data["data"]
 
     def export_as_pickle(self, path: str) -> None:
@@ -85,8 +80,6 @@ class Block:
             "y_off": self.y_off,
             "x_size": self.x_size,
             "y_size": self.y_size,
-            "z_scale": self.z_scale,
-            "z_offset": self.z_offset,
             "data": self.scaled_image
         }
 
@@ -115,13 +108,16 @@ class Block:
         with open(filepath, "w") as file:
             file.write("\n".join(dat_rows))
 
+    def scale_z(self, scale):
+        self.scaled_image *= scale
+
     def load_image(self) -> None:
         """
         Load an image from a tif file.
         The image is scaled by average to the given resolution.
 
         Raises
-            RuntimeError if x_size, y_size, z_scale is not set.
+            RuntimeError if x_size, y_size is not set.
         """
 
         image = imread(self.filepath)
@@ -130,8 +126,6 @@ class Block:
             raise RuntimeError("x_size not initialized")
         if self.y_size is None:
             raise RuntimeError("y_size not initialized")
-        if self.z_scale is None:
-            raise RuntimeError("z_scale not initialized")
 
         # scaling factors for np scaling
         x_scale = self.x_size // self.scaled_image.shape[0]
@@ -146,6 +140,3 @@ class Block:
 
         # flipping it along x-axis
         self.scaled_image = np.flip(self.scaled_image, axis=0)
-
-        # apply z-scaling
-        self.scaled_image *= 1 / self.z_scale
