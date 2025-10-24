@@ -3,6 +3,7 @@ import math
 from tifffile import imread
 import pathlib
 import pickle
+from numba import njit
 
 
 class Block:
@@ -12,6 +13,7 @@ class Block:
 
     raster_x: int
     raster_y: int
+    export: np.array
 
     def __init__(
         self, filepath: pathlib.Path = pathlib.Path(""),
@@ -26,7 +28,7 @@ class Block:
 
         if x_off != None:
             self.x_off = x_off
-        if y_off != None:
+        if y_off != None and y_size != None:
             self.y_off = self.raster_y - y_off - y_size
 
         self.x_size = x_size
@@ -38,7 +40,7 @@ class Block:
         if resolution:
             self.scaled_image = np.zeros(resolution, dtype=np.int16)
 
-    def unmeractor(self, x: int, y: int) -> tuple[float, float]:
+    def unmercator(self, x: int, y: int) -> tuple[float, float]:
         """
         Return angular coordinates on globe for any given x, y coordinates.
         latitude:
@@ -57,10 +59,43 @@ class Block:
         if self.y_off is None:
             raise RuntimeError("y_off needs to be of type int, not None")
 
-        latitude = (x + self.x_off) / self.raster_x * 2 * math.pi
+        latitude = ((x + self.x_off) * 2) / self.raster_x * math.pi
         longitude = (y + self.y_off) / self.raster_y * math.pi
 
         return latitude, longitude
+
+    def export_projection(self):
+        if self.y_off < self.raster_y / 2 or self.x_off < 2 / 4 * self.raster_x or self.x_off > 3 / 4 * self.raster_x:
+            return
+
+        x_scale = self.x_size / self.scaled_image.shape[0]
+        y_scale = self.y_size / self.scaled_image.shape[1]
+
+        half_x = self.world.shape[0] / 2
+        half_y = self.world.shape[1] / 2
+
+        for x in range(self.scaled_image.shape[0]):
+            for y in range(self.scaled_image.shape[1]):
+                x_, y_ = self.projection_north_up(x * x_scale, y * y_scale)
+
+                x_ = (x_ + 1) * half_x
+                y_ = (y_ + 1) * half_y
+
+                x_ = min(int(x_), self.world.shape[0] - 1)
+                y_ = min(int(y_), self.world.shape[1] - 1)
+
+                self.world[x_, y_] = self.scaled_image[y,x]
+
+    def projection_north_up(self, x, y):
+        latitude, longitude = self.unmercator(x, y)
+        alpha = longitude - math.pi / 2
+        beta = latitude
+        scale = np.cos(alpha)
+        x = np.sin(beta)
+        y = np.cos(beta)
+
+        return x * scale, y * scale
+
 
     def read_from_pickle(self, path: pathlib.Path) -> None:
         with open(path, "rb") as f:

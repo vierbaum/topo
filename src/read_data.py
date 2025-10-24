@@ -6,7 +6,7 @@ import itertools
 import os
 import pathlib
 import block
-#pdb.set_trace()
+import numpy as np
 
 
 
@@ -95,10 +95,10 @@ def read_blocks_from_tif(dataset_path: pathlib.Path, sources: list[NavigableStri
             y_off=y_off,
             x_size=x_size,
             y_size=y_size,
-            resolution=(x_size // 20, y_size // 20),
+            resolution=(x_size // 60, y_size // 60),
         )
         current_block.load_image()
-        current_block.export_as_pickle(f"{dataset_path}/180x180/{filename}")
+        current_block.export_as_pickle(f"{dataset_path}/60x60/{filename}")
         blocks.append(current_block)
 
 
@@ -113,9 +113,23 @@ def read_blocks_from_pickle(resolution_dir: pathlib.Path) -> list[block.Block]:
 
 if __name__ == "__main__":
     dataset_path=pathlib.Path("data/aw3d30")
-    read_xml(dataset_path=dataset_path, xml_file="AW3D30_global.vrt", num_threads = 15)
-    #blocks = read_blocks_from_pickle(dataset_path / "180x180" / "AW3D30_global")
-    #for c_block in tqdm(blocks):
-    #    if c_block.x_off != None and c_block.y_off != None and c_block.x_size and c_block.y_size:
-    #        c_block.scale_z(1/50)
-    #        c_block.export_as_dat(f"heightdata/data{c_block.x_off // c_block.x_size},{c_block.y_off // c_block.y_size}")
+    #read_xml(dataset_path=dataset_path, xml_file="AW3D30_global.vrt", num_threads = 15)
+    block.Block.world = np.zeros((8000, 8000))
+
+    block.Block.raster_x=1296000
+    block.Block.raster_y=604800
+    blocks = read_blocks_from_pickle(dataset_path / "60x60" / "AW3D30_global")
+    for c_block in tqdm(blocks):
+        c_block.scale_z(1/60)
+        c_block.export_projection()
+        #if c_block.x_off != None and c_block.y_off != None and c_block.x_size and c_block.y_size:
+        #    c_block.scale_z(1/50)
+        #    c_block.export_as_dat(f"heightdata/data{c_block.x_off // c_block.x_size},{c_block.y_off // c_block.y_size}")
+    dat_rows = []
+
+    for x in range(block.Block.world.shape[0] // 4):
+        row = " ".join(str(block.Block.world[x, y]) for y in range(block.Block.world.shape[1] // 4))
+        dat_rows.append(row)
+
+    with open("world.dat", "w") as file:
+        file.write("\n".join(dat_rows))
