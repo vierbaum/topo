@@ -4,4 +4,6 @@ heightdata/*
 height_test.py
 *stl
 *dat
+worlddata/
+world.pickle
 __pycache__

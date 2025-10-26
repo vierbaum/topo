@@ -4,6 +4,7 @@ from tifffile import imread
 import pathlib
 import pickle
 from numba import njit
+from tqdm import tqdm
 
 
 class Block:
@@ -13,7 +14,7 @@ class Block:
 
     raster_x: int
     raster_y: int
-    export: np.array
+    world: np.array
 
     def __init__(
         self, filepath: pathlib.Path = pathlib.Path(""),
@@ -26,9 +27,9 @@ class Block:
         """Initialize self."""
         self.filepath = filepath
 
-        if x_off != None:
+        if x_off is not None:
             self.x_off = x_off
-        if y_off != None and y_size != None:
+        if y_off is not None and y_size is not None:
             self.y_off = self.raster_y - y_off - y_size
 
         self.x_size = x_size
@@ -40,32 +41,11 @@ class Block:
         if resolution:
             self.scaled_image = np.zeros(resolution, dtype=np.int16)
 
-    def unmercator(self, x: int, y: int) -> tuple[float, float]:
+    def export_projection(self) -> None:
         """
-        Return angular coordinates on globe for any given x, y coordinates.
-        latitude:
-            180W = 0pi
-            0W/E = pi
-            180E = 2pi
-
-        longitude:
-            90S = 0pi
-            0N/S = pi/2
-            90N = pi
+        Write the block to the world in north-up projection.
         """
-
-        if self.x_off is None:
-            raise RuntimeError("x_off needs to be of type int, not None")
-        if self.y_off is None:
-            raise RuntimeError("y_off needs to be of type int, not None")
-
-        latitude = ((x + self.x_off) * 2) / self.raster_x * math.pi
-        longitude = (y + self.y_off) / self.raster_y * math.pi
-
-        return latitude, longitude
-
-    def export_projection(self):
-        if self.y_off < self.raster_y / 2 or self.x_off < 2 / 4 * self.raster_x or self.x_off > 3 / 4 * self.raster_x:
+        if self.y_off < self.raster_y / 2:
             return
 
         x_scale = self.x_size / self.scaled_image.shape[0]
@@ -76,28 +56,69 @@ class Block:
 
         for x in range(self.scaled_image.shape[0]):
             for y in range(self.scaled_image.shape[1]):
-                x_, y_ = self.projection_north_up(x * x_scale, y * y_scale)
+                x_, y_ = projection_north_up(
+                    self.x_off + x * x_scale, self.y_off + y * y_scale, self.raster_x, self.raster_y)
 
                 x_ = (x_ + 1) * half_x
                 y_ = (y_ + 1) * half_y
 
-                x_ = min(int(x_), self.world.shape[0] - 1)
-                y_ = min(int(y_), self.world.shape[1] - 1)
+                x_ = min(round(x_), self.world.shape[0] - 1)
+                y_ = min(round(y_), self.world.shape[1] - 1)
 
-                self.world[x_, y_] = self.scaled_image[y,x]
+                self.world[x_, y_] = self.scaled_image[y, x]
 
-    def projection_north_up(self, x, y):
-        latitude, longitude = self.unmercator(x, y)
-        alpha = longitude - math.pi / 2
-        beta = latitude
-        scale = np.cos(alpha)
-        x = np.sin(beta)
-        y = np.cos(beta)
+    @classmethod
+    def export_array_to_dat(cls, array: np.array, filepath: str) -> None:
+        """
+        Export a np array to a .dat file.
 
-        return x * scale, y * scale
+        array
+            array to be exported
 
+        filepath
+            path to dat file
+        """
+        if np.max(array) == 200:
+            return
+
+        dat_rows = []
+        for x in range(array.shape[0]):
+            row = " ".join(str(array[x, y]) for y in range(array.shape[1]))
+            dat_rows.append(row)
+
+        with open(filepath, "w") as file:
+            file.write("\n".join(dat_rows))
+
+    @classmethod
+    def export_world_to_dat(cls, chunks_x: int, chunks_y: int) -> None:
+        """
+        Export world to equally sized chunks.
+
+        chunks_x
+            number of chunks in x-direction
+
+        chunks_y
+            number of chunks in y-direction
+        """
+        reshaped_size = cls.world.shape // np.array((chunks_x, chunks_y))
+
+        for x in tqdm(range(chunks_x)):
+            for y in range(chunks_y):
+                cls.export_array_to_dat(
+                    cls.world[
+                        x * reshaped_size[0]:(x + 1) * reshaped_size[0] + 1,
+                        y * reshaped_size[1]:(y + 1) * reshaped_size[1] + 1,
+                    ],
+                    f"worlddata/world{y},{x}"
+                )
 
     def read_from_pickle(self, path: pathlib.Path) -> None:
+        """
+        Read in Block form pickle file.
+
+        path
+            path of pickle file
+        """
         with open(path, "rb") as f:
             data = pickle.load(f)
 
@@ -109,6 +130,12 @@ class Block:
         self.scaled_image = data["data"]
 
     def export_as_pickle(self, path: str) -> None:
+        """
+        Export block data to a pickle file.
+
+        path
+            filepath
+        """
         data = {
             "filepath": self.filepath,
             "x_off": self.x_off,
@@ -143,8 +170,13 @@ class Block:
         with open(filepath, "w") as file:
             file.write("\n".join(dat_rows))
 
-    def scale_z(self, scale):
+    def scale_z(self, scale: float) -> None:
+        "Scale the image by a factor in z axis"
         self.scaled_image *= scale
+
+    def offset_z(self, offset):
+        "Offset the image by a factor in z axis"
+        self.scaled_image += offset
 
     def load_image(self) -> None:
         """
@@ -166,12 +198,68 @@ class Block:
         x_scale = self.x_size // self.scaled_image.shape[0]
         y_scale = self.y_size // self.scaled_image.shape[1]
 
-        reshaped = image.reshape(
-            self.scaled_image.shape[0],
-            x_scale,
-            self.scaled_image.shape[1],
-            y_scale)
-        self.scaled_image = reshaped.mean(axis=(1, 3))
+        # autopep8: off
+        self.scaled_image = image.reshape(self.scaled_image.shape[0], self.scaled_image.shape[1], x_scale * y_scale, copy=False)\
+            .swapaxes(1, 2)\
+            .reshape(self.scaled_image.shape[0], self.scaled_image.shape[1], x_scale * y_scale)\
+            .mean(axis=2)
+        # autopep8: on
 
         # flipping it along x-axis
         self.scaled_image = np.flip(self.scaled_image, axis=0)
+
+
+@njit
+def unmercator(x: float, y: float, raster_x: int, raster_y: int) -> tuple[float, float]:
+    """
+    Return angular coordinates on globe for any given x, y coordinates.
+    x
+        x position
+    y
+        y position
+
+    raster_x
+        total size of raster in x-direction
+    raster_y
+        total size of raster in y-direction
+
+    latitude:
+        180W = 0pi
+        0W/E = pi
+        180E = 2pi
+
+    longitude:
+        90S = 0pi
+        0N/S = pi/2
+        90N = pi
+    """
+
+    latitude = (x * 2) / raster_x * math.pi
+    longitude = y / raster_y * math.pi
+
+    return latitude, longitude
+
+
+@njit
+def projection_north_up(x: float, y: float, raster_x: int, raster_y: int) -> tuple[float, float]:
+    """
+        Map position of point in equidistant projection to north-up projection.
+
+        x
+            x position
+        y
+            y position
+
+        raster_x
+            total size of raster in x-direction
+        raster_y
+            total size of raster in y-direction
+    """
+    latitude, longitude = unmercator(x, y, raster_x, raster_y)
+    alpha = longitude - math.pi / 2
+    beta = latitude
+    scale = np.cos(alpha)
+    x = np.sin(beta)
+    y = np.cos(beta)
+
+    return x * scale, y * scale

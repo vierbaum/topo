@@ -7,7 +7,7 @@ import os
 import pathlib
 import block
 import numpy as np
-
+import pickle
 
 
 def read_xml(dataset_path: pathlib.Path, xml_file: str, num_threads: int) -> list[block.Block]:
@@ -112,24 +112,24 @@ def read_blocks_from_pickle(resolution_dir: pathlib.Path) -> list[block.Block]:
 
 
 if __name__ == "__main__":
-    dataset_path=pathlib.Path("data/aw3d30")
-    #read_xml(dataset_path=dataset_path, xml_file="AW3D30_global.vrt", num_threads = 15)
-    block.Block.world = np.zeros((8000, 8000))
+    dataset_path = pathlib.Path("data/aw3d30")
+    # read_xml(dataset_path=dataset_path, xml_file="AW3D30_global.vrt", num_threads=15)
+    block.Block.world = np.full((8192, 8192), 200)
 
-    block.Block.raster_x=1296000
-    block.Block.raster_y=604800
+    block.Block.raster_x = 1296000
+    block.Block.raster_y = 604800
+    # with open("world.pickle", "rb") as f:
+    #    block.Block.world = pickle.load(f)
     blocks = read_blocks_from_pickle(dataset_path / "60x60" / "AW3D30_global")
+
     for c_block in tqdm(blocks):
-        c_block.scale_z(1/60)
-        c_block.export_projection()
-        #if c_block.x_off != None and c_block.y_off != None and c_block.x_size and c_block.y_size:
-        #    c_block.scale_z(1/50)
-        #    c_block.export_as_dat(f"heightdata/data{c_block.x_off // c_block.x_size},{c_block.y_off // c_block.y_size}")
-    dat_rows = []
+        c_block.scale_z(1 / 60)
+        c_block.offset_z(200)
+        # c_block.export_projection()
+        c_block.export_as_dat(
+            f"heightdata/data{c_block.x_off // c_block.x_size},{c_block.y_off // c_block.y_size}")
 
-    for x in range(block.Block.world.shape[0] // 4):
-        row = " ".join(str(block.Block.world[x, y]) for y in range(block.Block.world.shape[1] // 4))
-        dat_rows.append(row)
+    # with open("world.pickle", "wb") as f:
+    #    pickle.dump(block.Block.world, f)
 
-    with open("world.dat", "w") as file:
-        file.write("\n".join(dat_rows))
+    # block.Block.export_world_to_dat(256, 256)
