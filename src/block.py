@@ -4,6 +4,7 @@ from tifffile import imread
 import pathlib
 import pickle
 from numba import njit
+from typing import Callable
 from tqdm import tqdm
 
 
@@ -41,11 +42,11 @@ class Block:
         if resolution:
             self.scaled_image = np.zeros(resolution, dtype=np.int16)
 
-    def export_projection(self) -> None:
+    def export_projection(self, projection: Callable, exit: Callable) -> None:
         """
         Write the block to the world in north-up projection.
         """
-        if self.y_off < self.raster_y / 2:
+        if exit(self):
             return
 
         x_scale = self.x_size / self.scaled_image.shape[0]
@@ -56,14 +57,14 @@ class Block:
 
         for x in range(self.scaled_image.shape[0]):
             for y in range(self.scaled_image.shape[1]):
-                x_, y_ = projection_north_up(
-                    self.x_off + x * x_scale, self.y_off + y * y_scale, self.raster_x, self.raster_y)
+                x_, y_ = projection(self.x_off + x * x_scale, self.y_off +
+                                    y * y_scale, self.raster_x, self.raster_y)
 
-                x_ = (x_ + 1) * half_x
-                y_ = (y_ + 1) * half_y
+                x_ = round((x_ + 1) * half_x)
+                y_ = round((y_ + 1) * half_y)
 
-                x_ = min(round(x_), self.world.shape[0] - 1)
-                y_ = min(round(y_), self.world.shape[1] - 1)
+                x_ = min(x_, self.world.shape[0] - 1)
+                y_ = min(y_, self.world.shape[1] - 1)
 
                 self.world[x_, y_] = self.scaled_image[y, x]
 
@@ -78,12 +79,12 @@ class Block:
         filepath
             path to dat file
         """
-        if np.max(array) == 200:
+        if np.max(array) == 0:
             return
 
         dat_rows = []
-        for x in range(array.shape[0]):
-            row = " ".join(str(array[x, y]) for y in range(array.shape[1]))
+        for y in range(array.shape[1]):
+            row = " ".join(str(array[x, y]) for x in range(array.shape[0]))
             dat_rows.append(row)
 
         with open(filepath, "w") as file:
@@ -109,7 +110,7 @@ class Block:
                         x * reshaped_size[0]:(x + 1) * reshaped_size[0] + 1,
                         y * reshaped_size[1]:(y + 1) * reshaped_size[1] + 1,
                     ],
-                    f"worlddata/world{y},{x}"
+                    f"worlddata/world{x},{y}"
                 )
 
     def read_from_pickle(self, path: pathlib.Path) -> None:

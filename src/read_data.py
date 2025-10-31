@@ -7,7 +7,7 @@ import os
 import pathlib
 import block
 import numpy as np
-import pickle
+import projections.wagner
 
 
 def read_xml(dataset_path: pathlib.Path, xml_file: str, num_threads: int) -> list[block.Block]:
@@ -95,10 +95,10 @@ def read_blocks_from_tif(dataset_path: pathlib.Path, sources: list[NavigableStri
             y_off=y_off,
             x_size=x_size,
             y_size=y_size,
-            resolution=(x_size // 60, y_size // 60),
+            resolution=(x_size // 360, y_size // 360),
         )
         current_block.load_image()
-        current_block.export_as_pickle(f"{dataset_path}/60x60/{filename}")
+        current_block.export_as_pickle(f"{dataset_path}/10x10/{filename}")
         blocks.append(current_block)
 
 
@@ -110,26 +110,69 @@ def read_blocks_from_pickle(resolution_dir: pathlib.Path) -> list[block.Block]:
         blocks.append(b)
     return blocks
 
+def project_blocks(blocks, projection):
+    for b in tqdm(blocks):
+        projection(b)
 
 if __name__ == "__main__":
+
+    #print(projections.wagner.angle_to_wagner(-np.pi, -np.pi/2))
     dataset_path = pathlib.Path("data/aw3d30")
-    # read_xml(dataset_path=dataset_path, xml_file="AW3D30_global.vrt", num_threads=15)
-    block.Block.world = np.full((8192, 8192), 200)
+    #read_xml(dataset_path=dataset_path, xml_file="AW3D30_global.vrt", num_threads=15)
+
+    #max_ = [0, 0]
+    #for lat in np.arange(-np.pi, np.pi, 0.001):
+    #    for long in np.arange(-np.pi / 2, np.pi / 2, 0.001):
+    #        x, y = projections.wagner.angle_to_wagner(lat, long)
+    #        if abs(x) > max_[0]:
+    #            max_[0] = abs(x)
+    #        if abs(y) > max_[1]:
+    #            max_[1] = abs(y)
+    #print(max_)
 
     block.Block.raster_x = 1296000
     block.Block.raster_y = 604800
-    # with open("world.pickle", "rb") as f:
-    #    block.Block.world = pickle.load(f)
     blocks = read_blocks_from_pickle(dataset_path / "60x60" / "AW3D30_global")
+    world = np.full((2*2048, 2*1024), 0)
 
     for c_block in tqdm(blocks):
         c_block.scale_z(1 / 60)
-        c_block.offset_z(200)
-        # c_block.export_projection()
-        c_block.export_as_dat(
-            f"heightdata/data{c_block.x_off // c_block.x_size},{c_block.y_off // c_block.y_size}")
+        projections.wagner.wagner(
+            topo_data=c_block.scaled_image,
+            projection=world,
+            x_offset=c_block.x_off,
+            y_offset=c_block.y_off,
+            x_scale = c_block.x_size / c_block.scaled_image.shape[0],
+            y_scale = c_block.y_size / c_block.scaled_image.shape[1],
+            raster_x = block.Block.raster_x,
+            raster_y=block.Block.raster_y
+        )
 
-    # with open("world.pickle", "wb") as f:
-    #    pickle.dump(block.Block.world, f)
+    print("LONG")
+    for longitude in tqdm(np.arange(-np.pi / 2, np.pi / 2, 0.001)):
+        for latitude in (-np.pi, np.pi):
+            x_, y_ = projections.wagner.angle_to_wagner(-latitude, longitude)
+            x_ *= world.shape[0] - 1
+            x_ += world.shape[0] / 2
+            y_ *= world.shape[1] - 1
+            y_ += world.shape[1] / 2
+            x_ = round(x_)
+            y_ = round(y_)
 
-    # block.Block.export_world_to_dat(256, 256)
+            world[x_, y_] = 200
+
+    print("LAT")
+    for latitude in tqdm(np.arange(-np.pi, np.pi, 0.001)):
+        for longitude in (-np.pi / 2, np.pi / 2):
+            x_, y_ = projections.wagner.angle_to_wagner(-latitude, longitude)
+            x_ *= world.shape[0] - 1
+            x_ += world.shape[0] / 2
+            y_ *= world.shape[1] - 1
+            y_ += world.shape[1] / 2
+            x_ = round(x_)
+            y_ = round(y_)
+
+            world[x_, y_] = 200
+    print("EXPORTING")
+    block.Block.world = world
+    block.Block.export_world_to_dat(32, 16)
