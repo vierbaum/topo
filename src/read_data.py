@@ -1,6 +1,7 @@
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString
 from tqdm import tqdm
+import pickle
 import threading
 import itertools
 import os
@@ -8,6 +9,10 @@ import pathlib
 import block
 import numpy as np
 import projections.wagner
+import geopandas as gpd
+import shapely
+from concurrent.futures import ThreadPoolExecutor
+from time import sleep
 
 
 def read_xml(dataset_path: pathlib.Path, xml_file: str, num_threads: int) -> list[block.Block]:
@@ -95,10 +100,10 @@ def read_blocks_from_tif(dataset_path: pathlib.Path, sources: list[NavigableStri
             y_off=y_off,
             x_size=x_size,
             y_size=y_size,
-            resolution=(x_size // 360, y_size // 360),
+            resolution=(80, 80),
         )
         current_block.load_image()
-        current_block.export_as_pickle(f"{dataset_path}/10x10/{filename}")
+        current_block.export_as_pickle(f"{dataset_path}/80x80/{filename}")
         blocks.append(current_block)
 
 
@@ -114,65 +119,68 @@ def project_blocks(blocks, projection):
     for b in tqdm(blocks):
         projection(b)
 
+def export_polygon(src_polygon, export_path, area_threashhold):
+    dst_point_array =[]
+    for long, lat in zip(src_polygon.exterior.xy[0], src_polygon.exterior.xy[1]):
+        x, y = projections.wagner.angle_to_wagner(np.radians(long), np.radians(lat))
+        if isinstance(x, float) and isinstance(y, float):
+            dst_point_array.append([x,y])
+
+    #square
+    #if len(dst_point_array) <= 5:
+    #    return
+
+    dst_polygon = shapely.Polygon(dst_point_array)
+    try:
+        if dst_polygon.area < area_threashhold:
+            return
+
+        with open(export_path, "wb") as f:
+            pickle.dump(dst_polygon, f)
+    except Exception:
+        print(dst_point_array)
+
+def export_coastlines(coastlines_file="data/coastlines/land_polygons.shp", export_dir="data/coastlines/polygons"):
+    gdf = gpd.read_file(coastlines_file)
+    coastlines = gdf["geometry"]
+    for i, src_polygon in tqdm(enumerate(coastlines)):
+        export_polygon(src_polygon, f"{export_dir}/polygon{i}.pickle", 0)
+
+def export_tile(blocks, tile, x, y, size):
+    for c_block in tqdm(blocks):
+        assert c_block.x_size != None
+        assert c_block.y_size != None
+        c_block.scale_z(1 / 30)
+        projections.wagner.wagner_tile(
+            topo_data=c_block.scaled_image.T,
+            x_offset=c_block.x_off,
+            y_offset=c_block.y_off,
+            x_scale=c_block.x_size / c_block.scaled_image.shape[0],
+            y_scale=c_block.y_size / c_block.scaled_image.shape[1],
+            raster_x=block.Block.raster_x,
+            raster_y=block.Block.raster_y,
+            tile_arr=tile,
+            tile_x=x,
+            tile_y=y,
+            total_x_res=tile.shape[0] * size[0],
+            total_y_res=tile.shape[1] * size[1]
+        )
+
 if __name__ == "__main__":
-
-    #print(projections.wagner.angle_to_wagner(-np.pi, -np.pi/2))
+    #export_coastlines()
     dataset_path = pathlib.Path("data/aw3d30")
-    #read_xml(dataset_path=dataset_path, xml_file="AW3D30_global.vrt", num_threads=15)
-
-    #max_ = [0, 0]
-    #for lat in np.arange(-np.pi, np.pi, 0.001):
-    #    for long in np.arange(-np.pi / 2, np.pi / 2, 0.001):
-    #        x, y = projections.wagner.angle_to_wagner(lat, long)
-    #        if abs(x) > max_[0]:
-    #            max_[0] = abs(x)
-    #        if abs(y) > max_[1]:
-    #            max_[1] = abs(y)
-    #print(max_)
+    pixel_res = (4096, 4096)
+    tile = np.zeros(pixel_res)
 
     block.Block.raster_x = 1296000
     block.Block.raster_y = 604800
-    blocks = read_blocks_from_pickle(dataset_path / "60x60" / "AW3D30_global")
-    world = np.full((2*2048, 2*1024), 0)
 
-    for c_block in tqdm(blocks):
-        c_block.scale_z(1 / 60)
-        projections.wagner.wagner(
-            topo_data=c_block.scaled_image,
-            projection=world,
-            x_offset=c_block.x_off,
-            y_offset=c_block.y_off,
-            x_scale = c_block.x_size / c_block.scaled_image.shape[0],
-            y_scale = c_block.y_size / c_block.scaled_image.shape[1],
-            raster_x = block.Block.raster_x,
-            raster_y=block.Block.raster_y
-        )
+    #read_xml(dataset_path=dataset_path, xml_file="AW3D30_global.vrt", num_threads=15)
 
-    print("LONG")
-    for longitude in tqdm(np.arange(-np.pi / 2, np.pi / 2, 0.001)):
-        for latitude in (-np.pi, np.pi):
-            x_, y_ = projections.wagner.angle_to_wagner(-latitude, longitude)
-            x_ *= world.shape[0] - 1
-            x_ += world.shape[0] / 2
-            y_ *= world.shape[1] - 1
-            y_ += world.shape[1] / 2
-            x_ = round(x_)
-            y_ = round(y_)
+    blocks = read_blocks_from_pickle(dataset_path / "360x360" / "AW3D30_global")
 
-            world[x_, y_] = 200
+    export_tile(blocks, tile, 5, 5, (20, 10))
 
-    print("LAT")
-    for latitude in tqdm(np.arange(-np.pi, np.pi, 0.001)):
-        for longitude in (-np.pi / 2, np.pi / 2):
-            x_, y_ = projections.wagner.angle_to_wagner(-latitude, longitude)
-            x_ *= world.shape[0] - 1
-            x_ += world.shape[0] / 2
-            y_ *= world.shape[1] - 1
-            y_ += world.shape[1] / 2
-            x_ = round(x_)
-            y_ = round(y_)
-
-            world[x_, y_] = 200
     print("EXPORTING")
-    block.Block.world = world
-    block.Block.export_world_to_dat(32, 16)
+    block.Block.world = tile
+    block.Block.export_world_to_dat(64, 64)

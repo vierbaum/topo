@@ -27,7 +27,7 @@ def unmercator(x: float, y: float, raster_x: int, raster_y: int) -> tuple[float,
         90N = pi/2
     """
 
-    latitude = (x / raster_x * 2 * np.pi) - np.pi# % (2 * np.pi)
+    latitude = (x / raster_x * 2 * np.pi) - np.pi  # % (2 * np.pi)
     longitude = y / raster_y * np.pi - np.pi / 2
 
     return latitude, longitude
@@ -59,6 +59,50 @@ def angle_to_wagner(latitude: float, longitude: float) -> tuple[float, float]:
         return -x, y
     return x, y
 
+
+@njit
+def wagner_tile(
+        topo_data,
+        x_offset,
+        y_offset,
+        x_scale,
+        y_scale,
+        raster_x,
+        raster_y,
+        tile_arr,
+        tile_x,
+        tile_y,
+        total_x_res,
+        total_y_res,
+):
+    assert x_scale > 0
+    assert y_scale > 0
+
+    for x in range(topo_data.shape[0]):
+        for y in range(topo_data.shape[1]):
+            latitude, longitude = unmercator(
+                x * x_scale + x_offset, y * y_scale + y_offset, raster_x, raster_y)
+            x_, y_ = angle_to_wagner(latitude, longitude)
+            #print(x, y, latitude, longitude, x_, y_)
+
+            # x,y in [-0.5, 0.5], scaling to total res
+            x_ *= total_x_res - 1
+            x_ += total_x_res / 2
+            y_ *= total_y_res - 1
+            y_ += total_y_res / 2
+            # offseting to 0
+            x_ = round(x_)
+            x_ -= tile_x * tile_arr.shape[0]
+            y_ = round(y_)
+            y_ -= tile_y * tile_arr.shape[1]
+
+            is_in_tile_x = 0 <= x_ < tile_arr.shape[0]
+            is_in_tile_y = 0 <= y_ < tile_arr.shape[1]
+            if is_in_tile_x and is_in_tile_y:
+                tile_arr[x_, y_] = topo_data[x, y]
+
+
+
 @njit
 def wagner(
         topo_data: np.array,
@@ -71,12 +115,20 @@ def wagner(
         raster_y: int):
     for x in range(topo_data.shape[0]):
         for y in range(topo_data.shape[1]):
-            latitude, longitude = unmercator(x * x_scale + x_offset, y * y_scale + y_offset, raster_x, raster_y)
+            latitude, longitude = unmercator(
+                x * x_scale + x_offset, y * y_scale + y_offset, raster_x, raster_y)
             x_, y_ = angle_to_wagner(latitude, longitude)
-            x_ *= projection.shape[0] - 1
-            x_ += projection.shape[0] / 2
-            y_ *= projection.shape[1] - 1
-            y_ += projection.shape[1] / 2
-            x_ = round(x_)
-            y_ = round(y_)
-            #projection[x_, y_] = topo_data[y, x]
+            try:
+                x_ *= projection.shape[0] - 1
+                x_ += projection.shape[0] / 2
+                y_ *= projection.shape[1] - 1
+                y_ += projection.shape[1] / 2
+                x_ = round(x_)
+                y_ = round(y_)
+
+                x_ = round((x * x_scale + x_offset) / raster_x * projection.shape[0])
+                y_ = round((y * y_scale + y_offset) / raster_y * projection.shape[1])
+                if 0 <= x_ < projection.shape[0] and 0 <= y_ < projection.shape[1]:
+                    projection[x_, y_] = topo_data[x, y]
+            except Exception:
+                print(x, y, latitude, longitude, x_, y_)

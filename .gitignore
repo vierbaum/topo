@@ -2,6 +2,7 @@ data/*
 heightdata/*
 *scad
 height_test.py
+polygontest.py
 *stl
 *dat
 worlddata/

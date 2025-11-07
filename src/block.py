@@ -79,6 +79,7 @@ class Block:
         filepath
             path to dat file
         """
+
         if np.max(array) == 0:
             return
 
@@ -200,13 +201,10 @@ class Block:
         y_scale = self.y_size // self.scaled_image.shape[1]
 
         # autopep8: off
-        self.scaled_image = image.reshape(self.scaled_image.shape[0], self.scaled_image.shape[1], x_scale * y_scale, copy=False)\
-            .swapaxes(1, 2)\
-            .reshape(self.scaled_image.shape[0], self.scaled_image.shape[1], x_scale * y_scale)\
-            .mean(axis=2)
+        self.scaled_image = image.reshape(-1, y_scale, image.shape[0])\
+            .mean(axis=1)\
+            .reshape(self.scaled_image.shape[0], self.scaled_image.shape[1], x_scale).mean(axis=2)
         # autopep8: on
-
-        # flipping it along x-axis
         self.scaled_image = np.flip(self.scaled_image, axis=0)
 
 
