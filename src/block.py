@@ -205,7 +205,7 @@ class Block:
             .mean(axis=1)\
             .reshape(self.scaled_image.shape[0], self.scaled_image.shape[1], x_scale).mean(axis=2)
         # autopep8: on
-        self.scaled_image = np.flip(self.scaled_image, axis=0)
+        self.scaled_image = np.rot90(self.scaled_image, k=3)
 
 
 @njit
